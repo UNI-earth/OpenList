@@ -1,14 +1,13 @@
-name: Build All Platforms
+name: Build My OpenList
 
 on:
   workflow_dispatch:
     inputs:
-      version_tag:
-        description: '后端版本号 (如 v4.1.8)'
-        required: true
+      version:
+        description: '版本号'
         default: 'v4.1.9'
-      build_lite:
-        description: '是否使用 Lite 版前端'
+      lite:
+        description: '使用 Lite 前端'
         type: boolean
         default: false
 
@@ -16,7 +15,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Backend
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -25,30 +24,31 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-          cache: true
 
-      - name: Build All Binaries
+      # 【关键步】安装 Zig 以支持 arm64 交叉编译
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.11.0
+
+      - name: Build All Platforms
         env:
           FRONTEND_REPO: "UNI-earth/OpenList-Frontend"
-          # GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 如果前端仓库私有则开启
-          VERSION: ${{ github.event.inputs.version_tag }}
+          VERSION: ${{ github.event.inputs.version }}
         run: |
           chmod +x build.sh
           
-          # 定义基础命令
-          # 根据你的 build.sh 逻辑，'release' 参数会触发全平台构建循环
-          BUILD_CMD="./build.sh release"
-          
-          if [ "${{ github.event.inputs.build_lite }}" = "true" ]; then
-            BUILD_CMD="$BUILD_CMD lite"
+          # 构造编译命令
+          CMD="./build.sh release"
+          if [ "${{ github.event.inputs.lite }}" = "true" ]; then
+            CMD="$CMD lite"
           fi
           
-          echo "正在为所有平台编译版本: $VERSION ..."
-          $BUILD_CMD
+          echo "开始编译全平台版本: $VERSION ..."
+          $CMD
 
-      - name: Upload All Artifacts
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: OpenList-Full-Release-${{ github.event.inputs.version_tag }}
-          # build.sh 会把所有编译好的压缩包和二进制文件放在 bin/release 目录下
+          name: OpenList-${{ github.event.inputs.version }}
           path: bin/release/*
