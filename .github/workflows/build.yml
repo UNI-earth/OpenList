@@ -21,8 +21,10 @@ jobs:
           - linux-amd64-musl
           - windows-arm64
           - android-arm64
+
     name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,12 +37,40 @@ jobs:
         with:
           go-version: "1.25.0"
 
+      # ============================================
+      # 自动识别你自己的前端最新 Release（dev 用）
+      # ============================================
+      - name: Detect frontend release
+        run: |
+          TAG=$(curl -fsSL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/你的用户名/OpenList-Frontend/releases \
+            | jq -r '
+              map(select(.draft == false))
+              | sort_by(.published_at)
+              | last
+              | .tag_name
+            ')
+
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "❌ Failed to detect frontend release"
+            exit 1
+          fi
+
+          echo "✅ Using frontend release: $TAG"
+          echo "FRONTEND_VERSION=$TAG" >> $GITHUB_ENV
+
+      # ======================
+      # Setup web (dev)
+      # ======================
       - name: Setup web
         run: bash build.sh dev web
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
+      # ======================
+      # Build backend
+      # ======================
       - name: Build
         uses: OpenListTeam/cgo-actions@v1.2.2
         with:
@@ -48,14 +78,17 @@ jobs:
           musl-target-format: $os-$musl-$arch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           out-dir: build
+          output: openlist$ext
           x-flags: |
             github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$built_at
             github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=The OpenList Projects Contributors <noreply@openlist.team>
             github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=$git_commit
-            github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$tag
-            github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
-          output: openlist$ext
+            github.com/OpenListTeam/OpenList/v4/internal/conf.Version=dev
+            github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=$FRONTEND_VERSION
 
+      # ======================
+      # Upload artifact
+      # ======================
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
