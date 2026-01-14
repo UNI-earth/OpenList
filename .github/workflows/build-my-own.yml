@@ -1,19 +1,19 @@
-name: Build My OpenList
+name: Build All Platforms
 
-于:
+on:
   workflow_dispatch:
     inputs:
-      version_name:
-        description: '设置后端版本号 (例如 v4.2.0)'
+      version_tag:
+        description: '后端版本号 (如 v4.1.8)'
         required: true
-        默认: 'v4.1.8'
+        default: 'v4.1.9'
       build_lite:
-        description: '是否编译 Lite 版本'
-        输入: boolean
-        默认: false
+        description: '是否使用 Lite 版前端'
+        type: boolean
+        default: false
 
 jobs:
-  build-backend:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Backend
@@ -27,29 +27,28 @@ jobs:
           go-version: '1.22'
           cache: true
 
-      - name: Build and Package
+      - name: Build All Binaries
         env:
-          # 使用你自己的前端仓库
           FRONTEND_REPO: "UNI-earth/OpenList-Frontend"
-          # 强制指定版本号，解决 v0.0.0 的问题
-          VERSION: ${{ github.event.inputs.version_name }}
-          # 如果你的前端仓库是私有的，需要取消下面注释并配置 Secrets
-          # GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 如果前端仓库私有则开启
+          VERSION: ${{ github.event.inputs.version_tag }}
         run: |
           chmod +x build.sh
           
-          # 根据输入决定是否增加 lite 参数
+          # 定义基础命令
+          # 根据你的 build.sh 逻辑，'release' 参数会触发全平台构建循环
           BUILD_CMD="./build.sh release"
+          
           if [ "${{ github.event.inputs.build_lite }}" = "true" ]; then
             BUILD_CMD="$BUILD_CMD lite"
           fi
           
-          # 执行编译
-          echo "正在编译版本: $VERSION"
+          echo "正在为所有平台编译版本: $VERSION ..."
           $BUILD_CMD
 
-      - name: Upload Binaries
+      - name: Upload All Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openlist-${{ github.event.inputs.version_name }}
+          name: OpenList-Full-Release-${{ github.event.inputs.version_tag }}
+          # build.sh 会把所有编译好的压缩包和二进制文件放在 bin/release 目录下
           path: bin/release/*
