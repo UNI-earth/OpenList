@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号'
+        description: '后端版本号'
         default: 'v4.1.9'
       lite:
         description: '使用 Lite 前端'
@@ -25,27 +25,42 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 【关键步】安装 Zig 以支持 arm64 交叉编译
       - name: Setup Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.11.0
 
-      - name: Build All Platforms
+      - name: Build Win & Linux (amd64 & arm64)
         env:
           FRONTEND_REPO: "UNI-earth/OpenList-Frontend"
           VERSION: ${{ github.event.inputs.version }}
         run: |
           chmod +x build.sh
           
-          # 构造编译命令
-          CMD="./build.sh release"
+          # 1. 借用脚本的 dev 模式下载并解压你仓库的前端文件
           if [ "${{ github.event.inputs.lite }}" = "true" ]; then
-            CMD="$CMD lite"
+            ./build.sh dev lite
+          else
+            ./build.sh dev
           fi
-          
-          echo "开始编译全平台版本: $VERSION ..."
-          $CMD
+
+          # 2. 准备输出目录
+          mkdir -p bin/release
+
+          # 3. 设置编译参数 (注入版本号和编译时间)
+          LDFLAGS="-s -w -X 'main.version=$VERSION' -X 'main.builtAt=$(date +'%F %T %z')'"
+
+          echo "正在编译 Windows 平台..."
+          # Windows amd64 (普通电脑)
+          GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o bin/release/openlist-windows-amd64.exe
+          # Windows arm64 (Surface Pro 等 ARM 设备)
+          GOOS=windows GOARCH=arm64 CC="zig cc -target aarch64-windows" CGO_ENABLED=1 go build -ldflags="$LDFLAGS" -o bin/release/openlist-windows-arm64.exe
+
+          echo "正在编译 Linux 平台..."
+          # Linux amd64 (普通服务器)
+          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o bin/release/openlist-linux-amd64
+          # Linux arm64 (树莓派/手机/国产服务器)
+          GOOS=linux GOARCH=arm64 CC="zig cc -target aarch64-linux" CGO_ENABLED=1 go build -ldflags="$LDFLAGS" -o bin/release/openlist-linux-arm64
 
       - name: Upload
         uses: actions/upload-artifact@v4
