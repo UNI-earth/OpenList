@@ -20,10 +20,10 @@ fi
 
 if [ "$1" = "dev" ]; then
   version="dev"
-  webVersion="rolling"
+  webVersion=""
 elif [ "$1" = "beta" ]; then
   version="beta"
-  webVersion="rolling"
+  webVersion=""
 else
   git tag -d beta || true
   # Always true if there's no tag
