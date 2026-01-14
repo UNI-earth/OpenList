@@ -7,7 +7,7 @@ on:
         description: '后端版本号'
         default: 'v4.1.9'
       frontend_tag:
-        description: '前端 Release 标签名 (例如 v4.1.8)'
+        description: '前端 Release 标签名'
         default: 'v4.1.8'
       lite:
         description: '使用 Lite 前端'
@@ -16,7 +16,19 @@ on:
 
 jobs:
   build:
+    name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # --- 在下方自由注释或删除不需要的平台 ---
+          #- windows-amd64
+          #- windows-arm64
+          #- linux-amd64-musl
+          - linux-arm64-musl
+          #- android-arm64
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,41 +48,48 @@ jobs:
           REPO: "UNI-earth/OpenList-Frontend"
           TAG: ${{ github.event.inputs.frontend_tag }}
         run: |
-          # 1. 确定文件名
           if [ "${{ github.event.inputs.lite }}" = "true" ]; then
             FILE="openlist-frontend-dist-lite-${TAG}.tar.gz"
           else
             FILE="openlist-frontend-dist-${TAG}.tar.gz"
           fi
-          
-          # 2. 直接从你的 Release 下载，跳过 API 查询防止 404
-          echo "正在从 $REPO 下载前端: $FILE"
           URL="https://github.com/$REPO/releases/download/$TAG/$FILE"
           curl -L -o frontend.tar.gz "$URL"
-          
-          # 3. 创建目录并解压 (这是后端编译必须的路径)
           mkdir -p public/dist
           tar -xzf frontend.tar.gz -C public/dist --strip-components=1
-          echo "前端准备就绪"
 
-      - name: Build Binaries
+      - name: Compile Binary
         env:
           VERSION: ${{ github.event.inputs.version }}
+          TARGET: ${{ matrix.target }}
         run: |
           mkdir -p bin/release
-          # 注入版本号和时间
+          # 注入自定义版本号和编译时间
           LDFLAGS="-s -w -X 'main.version=$VERSION' -X 'main.builtAt=$(date +'%F %T %z')'"
           
-          echo "正在编译 Windows..."
-          GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o bin/release/openlist-windows-amd64.exe
-          GOOS=windows GOARCH=arm64 CC="zig cc -target aarch64-windows" CGO_ENABLED=1 go build -ldflags="$LDFLAGS" -o bin/release/openlist-windows-arm64.exe
-
-          echo "正在编译 Linux..."
-          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o bin/release/openlist-linux-amd64
-          GOOS=linux GOARCH=arm64 CC="zig cc -target aarch64-linux" CGO_ENABLED=1 go build -ldflags="$LDFLAGS" -o bin/release/openlist-linux-arm64
+          case $TARGET in
+            windows-amd64)
+              GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/release/openlist-windows-amd64.exe
+              ;;
+            windows-arm64)
+              GOOS=windows GOARCH=arm64 CC="zig cc -target aarch64-windows" CGO_ENABLED=1 go build -ldflags="$LDFLAGS" -o bin/release/openlist-windows-arm64.exe
+              ;;
+            linux-amd64-musl)
+              # 静态编译：兼容 Alpine (musl) 和 Ubuntu (glibc)
+              GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/release/openlist-linux-amd64
+              ;;
+            linux-arm64-musl)
+              # 使用 Zig 交叉编译至 ARM64 Musl 目标
+              GOOS=linux GOARCH=arm64 CC="zig cc -target aarch64-linux-musl" CGO_ENABLED=1 go build -ldflags="$LDFLAGS" -o bin/release/openlist-linux-arm64
+              ;;
+            android-arm64)
+              # Android 平台通常使用静态编译
+              GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/release/openlist-android-arm64
+              ;;
+          esac
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: OpenList-${{ github.event.inputs.version }}
+          name: OpenList-${{ matrix.target }}-${{ github.event.inputs.version }}
           path: bin/release/*
