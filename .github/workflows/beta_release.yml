@@ -16,56 +16,56 @@ jobs:
   changelog:
     name: Beta Release Changelog
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Create or update ref
-        id: create-or-update-ref
+      - name: Create or update beta tag
         uses: ovsds/create-or-update-ref-action@v1
         with:
           ref: tags/beta
           sha: ${{ github.sha }}
 
-      - name: Delete beta tag
+      - name: Delete local beta tag
         run: git tag -d beta
         continue-on-error: true
 
-      - name: changelog # or changelogithub@0.12 if ensure the stable result
-        id: changelog
+      - name: Generate changelog
         run: |
           git tag -l
           npx changelogithub --output CHANGELOG.md
 
-      - name: Upload assets to beta release
+      - name: Upload changelog to beta release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: beta
+          prerelease: true
           body_path: CHANGELOG.md
           files: CHANGELOG.md
-          prerelease: true
-          tag_name: beta
 
-      - name: Upload assets to github artifact
+      - name: Upload changelog artifact
         uses: actions/upload-artifact@v4
         with:
-          name: beta changelog
-          path: ${{ github.workspace }}/CHANGELOG.md
+          name: beta-changelog
+          path: CHANGELOG.md
           compression-level: 0
-          if-no-files-found: error # 'warn' or 'ignore' are also available, defaults to `warn`
+          if-no-files-found: error
 
   release:
-    needs:
-      - changelog
+    needs: changelog
+    runs-on: ubuntu-latest
+
     strategy:
       matrix:
         include:
-          - target: "linux-arm64-musl" #musl-arm
+          - target: "linux-arm64-musl"
             hash: "md5-linux-musl-arm64"
 
     name: Beta Release
-    runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,11 +77,35 @@ jobs:
         with:
           go-version: "1.25.0"
 
-      - name: Setup web
+      # =================================================
+      # 自动识别前端最新 Release 版本
+      # =================================================
+      - name: Detect latest frontend release
+        id: frontend
+        run: |
+          FRONTEND_REPO="yourname/OpenList-Frontend"
+
+          TAG=$(curl -fsSL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/$FRONTEND_REPO/releases/latest \
+            | jq -r '.tag_name')
+
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "❌ Failed to detect latest frontend release"
+            exit 1
+          fi
+
+          echo "✅ Detected frontend version: $TAG"
+          echo "FRONTEND_VERSION=$TAG" >> $GITHUB_ENV
+          echo "FRONTEND_REPO=$FRONTEND_REPO" >> $GITHUB_ENV
+
+      # =================================================
+      # 使用自动识别到的前端版本
+      # =================================================
+      - name: Setup web (auto frontend version)
         run: bash build.sh dev web
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
       - name: Build
         uses: OpenListTeam/cgo-actions@v1.2.2
@@ -97,35 +121,29 @@ jobs:
             github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=The OpenList Projects Contributors <noreply@openlist.team>
             github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=$git_commit
             github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$tag
-            github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
+            github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=$FRONTEND_VERSION
 
       - name: Compress
-        run: |
-          bash build.sh zip ${{ matrix.hash }}
+        run: bash build.sh zip ${{ matrix.hash }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # See above
       - name: Upload assets to beta release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/compress/*
-          prerelease: true
           tag_name: beta
+          prerelease: true
+          files: build/compress/*
 
-      - name: Clean illegal characters from matrix.target
-        id: clean_target_name
+      - name: Clean target name
         run: |
-          ILLEGAL_CHARS_REGEX='[":<>|*?\\/\r\n]'
-          CLEANED_TARGET=$(echo "${{ matrix.target }}" | sed -E "s/$ILLEGAL_CHARS_REGEX//g")
-          echo "Original target: ${{ matrix.target }}"
-          echo "Cleaned target: $CLEANED_TARGET"
-          echo "cleaned_target=$CLEANED_TARGET" >> $GITHUB_ENV
+          CLEANED=$(echo "${{ matrix.target }}" | sed -E 's/[":<>|*?\\/\r\n]//g')
+          echo "CLEANED_TARGET=$CLEANED" >> $GITHUB_ENV
 
-      - name: Upload assets to github artifact
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: beta builds for ${{ env.cleaned_target }}
-          path: ${{ github.workspace }}/build/compress/*
+          name: beta-build-${{ env.CLEANED_TARGET }}
+          path: build/compress/*
           compression-level: 0
-          if-no-files-found: error # 'warn' or 'ignore' are also available, defaults to `warn`
+          if-no-files-found: error
