@@ -48,19 +48,6 @@ ldflags="\
 -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=$webVersion' \
 "
 
-FetchWebRolling() {
-  pre_release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/tags/rolling\"")
-  pre_release_assets=$(echo "$pre_release_json" | jq -r '.assets[].browser_download_url')
-  
-  # There is no lite for rolling
-  pre_release_tar_url=$(echo "$pre_release_assets" | grep "openlist-frontend-dist" | grep -v "lite" | grep "\.tar\.gz$")
-
-  curl -fsSL "$pre_release_tar_url" -o dist.tar.gz
-  rm -rf public/dist && mkdir -p public/dist
-  tar -zxvf dist.tar.gz -C public/dist
-  rm -rf dist.tar.gz
-}
-
 FetchWebRelease() {
   release_json=$(eval "curl -fsSL --max-time 2 $githubAuthArgs -H \"Accept: application/vnd.github.v3+json\" \"https://api.github.com/repos/$frontendRepo/releases/latest\"")
   release_assets=$(echo "$release_json" | jq -r '.assets[].browser_download_url')
