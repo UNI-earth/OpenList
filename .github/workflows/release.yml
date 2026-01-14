@@ -3,17 +3,15 @@ name: Release builds
 on:
   release:
     types: [ published ]
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  # Set release to prerelease first (release 触发时才有意义)
+  # Set release to prerelease first
   prerelease:
     name: Set Prerelease
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
     steps:
       - name: Prerelease
         uses: irongut/EditRelease@v1.2.0
@@ -22,17 +20,17 @@ jobs:
           id: ${{ github.event.release.id }}
           prerelease: true
 
+  # Main release job for all platforms
   release:
     needs: prerelease
     strategy:
       matrix:
         build-type: [ 'standard', 'lite' ]
         target-platform: [ '', 'android', 'freebsd', 'linux_musl', 'linux_musl_arm' ]
-
     name: Release ${{ matrix.target-platform && format('{0} ', matrix.target-platform) || '' }}${{ matrix.build-type == 'lite' && 'Lite' || '' }}
     runs-on: ubuntu-latest
-
     steps:
+
       - name: Free Disk Space (Ubuntu)
         if: matrix.target-platform == ''
         uses: jlumbroso/free-disk-space@main
@@ -63,44 +61,16 @@ jobs:
           go install github.com/crazy-max/xgo@latest
           sudo apt install upx
 
-      # =================================================
-      # 自动识别前端最新 Release（build.sh 已改用户名）
-      # =================================================
-      - name: Detect frontend version
-        run: |
-          TAG=$(curl -fsSL \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/你的用户名/OpenList-Frontend/releases \
-            | jq -r '
-              map(select(.draft == false))
-              | sort_by(.published_at)
-              | last
-              | .tag_name
-            ')
-
-          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            echo "❌ Failed to detect frontend release tag"
-            exit 1
-          fi
-
-          echo "✅ Using frontend release: $TAG"
-          echo "FRONTEND_VERSION=$TAG" >> $GITHUB_ENV
-
-      # ======================
-      # Build
-      # ======================
       - name: Build
         run: |
           bash build.sh release ${{ matrix.build-type == 'lite' && 'lite' || '' }} ${{ matrix.target-platform }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
-      # ======================
-      # Upload assets
-      # ======================
       - name: Upload assets
         uses: softprops/action-gh-release@v2
         with:
           files: build/compress/*
           prerelease: false
-          tag_name: ${{ github.event.release.tag_name || 'manual-release' }}
+          tag_name: ${{ github.event.release.tag_name }}
