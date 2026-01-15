@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '后端版本号'
+        description: '后端版本号 (例如 v4.1.9)'
         default: 'v4.1.9'
       frontend_tag:
-        description: '前端 Release 标签名'
+        description: '前端 Release 标签名 (例如 v4.1.8)'
         default: 'v4.1.8'
       lite:
         description: '使用 Lite 前端'
@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          # --- 在下方自由注释或删除不需要的平台 ---
+          # --- 你可以随时在这里通过 # 注释掉不需要的平台 ---
           #- windows-amd64
           #- windows-arm64
           #- linux-amd64-musl
@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -48,47 +50,69 @@ jobs:
           REPO: "UNI-earth/OpenList-Frontend"
           TAG: ${{ github.event.inputs.frontend_tag }}
         run: |
+          # 根据输入确定前端文件名
           if [ "${{ github.event.inputs.lite }}" = "true" ]; then
             FILE="openlist-frontend-dist-lite-${TAG}.tar.gz"
           else
             FILE="openlist-frontend-dist-${TAG}.tar.gz"
           fi
+          
+          echo "正在下载前端: $FILE"
           URL="https://github.com/$REPO/releases/download/$TAG/$FILE"
           curl -L -o frontend.tar.gz "$URL"
+          
+          # 解压至后端预期的目录
           mkdir -p public/dist
           tar -xzf frontend.tar.gz -C public/dist --strip-components=1
+          echo "前端文件已准备就绪"
 
       - name: Compile Binary
         env:
           VERSION: ${{ github.event.inputs.version }}
+          WEB_VERSION: ${{ github.event.inputs.frontend_tag }}
           TARGET: ${{ matrix.target }}
         run: |
           mkdir -p bin/release
-          # 注入自定义版本号和编译时间
-          LDFLAGS="-s -w -X 'main.version=$VERSION' -X 'main.builtAt=$(date +'%F %T %z')'"
           
+          # 提取编译元数据
+          BUILT_AT="$(date +'%F %T %z')"
+          GIT_COMMIT=$(git rev-parse --short HEAD || echo "unknown")
+          GIT_AUTHOR="The OpenList Projects Contributors <noreply@openlist.team>"
+
+          # 修正注入路径：指向 internal/conf 包
+          CONF_PATH="github.com/OpenListTeam/OpenList/v4/internal/conf"
+          
+          # 构造 LDFLAGS，确保注入后端版本、前端版本、编译时间和提交号
+          LDFLAGS="-s -w \
+            -X '$CONF_PATH.Version=$VERSION' \
+            -X '$CONF_PATH.WebVersion=$WEB_VERSION' \
+            -X '$CONF_PATH.BuiltAt=$BUILT_AT' \
+            -X '$CONF_PATH.GitCommit=$GIT_COMMIT' \
+            -X '$CONF_PATH.GitAuthor=$GIT_AUTHOR'"
+
+          echo "正在为 $TARGET 编译二进制文件..."
+
           case $TARGET in
             windows-amd64)
-              GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/release/openlist-windows-amd64.exe
+              GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -tags=jsoniter -o bin/release/openlist-windows-amd64.exe
               ;;
             windows-arm64)
-              GOOS=windows GOARCH=arm64 CC="zig cc -target aarch64-windows" CGO_ENABLED=1 go build -ldflags="$LDFLAGS" -o bin/release/openlist-windows-arm64.exe
+              GOOS=windows GOARCH=arm64 CC="zig cc -target aarch64-windows" CGO_ENABLED=1 go build -ldflags="$LDFLAGS" -tags=jsoniter -o bin/release/openlist-windows-arm64.exe
               ;;
             linux-amd64-musl)
-              # 静态编译：兼容 Alpine (musl) 和 Ubuntu (glibc)
-              GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/release/openlist-linux-amd64
+              # 静态编译：兼容 musl (Alpine) 和 glibc (Ubuntu)
+              GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -tags=jsoniter -o bin/release/openlist-linux-amd64
               ;;
             linux-arm64-musl)
-              # 使用 Zig 交叉编译至 ARM64 Musl 目标
-              GOOS=linux GOARCH=arm64 CC="zig cc -target aarch64-linux-musl" CGO_ENABLED=1 go build -ldflags="$LDFLAGS" -o bin/release/openlist-linux-arm64
+              # 使用 Zig 交叉编译至 ARM64 Musl
+              GOOS=linux GOARCH=arm64 CC="zig cc -target aarch64-linux-musl" CGO_ENABLED=1 go build -ldflags="$LDFLAGS" -tags=jsoniter -o bin/release/openlist-linux-arm64
               ;;
             android-arm64)
-              # Android 平台通常使用静态编译
-              GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/release/openlist-android-arm64
+              GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -tags=jsoniter -o bin/release/openlist-android-arm64
               ;;
           esac
 
-      - name: Upload
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: OpenList-${{ matrix.target }}-${{ github.event.inputs.version }}
